@@ -318,6 +318,30 @@ body {
   animation: bounce-up-center 0.8s ease-out forwards;
 }
 
+/* Route/page transition */
+@keyframes page-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.page-enter-transition {
+  animation: page-enter 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: opacity, transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-enter-transition {
+    animation: none;
+  }
+}
+
 
 
 @layer base {

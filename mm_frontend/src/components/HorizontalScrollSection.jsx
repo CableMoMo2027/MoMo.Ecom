@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, memo } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import ProductCard from './ProductCard';
 
@@ -53,4 +53,4 @@ const HorizontalScrollSection = ({ title, products, addToCart, toggleWishlist, w
   );
 };
 
-export default HorizontalScrollSection;
+export default memo(HorizontalScrollSection);

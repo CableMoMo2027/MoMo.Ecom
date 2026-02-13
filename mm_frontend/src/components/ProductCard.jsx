@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, memo, useCallback } from 'react';
 import { ShoppingCart, Heart, Star } from 'lucide-react';
 
 const ProductCard = ({ product, addToCart, toggleWishlist, wishlist, openQuickView }) => {
@@ -80,4 +80,17 @@ const ProductCard = ({ product, addToCart, toggleWishlist, wishlist, openQuickVi
   );
 };
 
-export default ProductCard;
+export default memo(ProductCard, (prevProps, nextProps) => {
+  const prevId = prevProps.product._id || prevProps.product.id;
+  const nextId = nextProps.product._id || nextProps.product.id;
+  const prevInWishlist = prevProps.wishlist.some(item => (item._id || item.id) === prevId);
+  const nextInWishlist = nextProps.wishlist.some(item => (item._id || item.id) === nextId);
+
+  return (
+    prevId === nextId &&
+    prevInWishlist === nextInWishlist &&
+    prevProps.product.price === nextProps.product.price &&
+    prevProps.product.name === nextProps.product.name &&
+    prevProps.product.image === nextProps.product.image
+  );
+});

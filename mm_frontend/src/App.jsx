@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { CheckCircle } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
@@ -24,19 +24,8 @@ import LoadingScreen from './components/LoadingScreen';
 
 // Page Transition Wrapper Component
 const PageTransition = ({ children, pageKey }) => {
-  const [isVisible, setIsVisible] = useState(false);
-
-  useEffect(() => {
-    setIsVisible(false);
-    const timer = setTimeout(() => setIsVisible(true), 50);
-    return () => clearTimeout(timer);
-  }, [pageKey]);
-
   return (
-    <div
-      className={`transition-all duration-500 ease-out ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
-        }`}
-    >
+    <div key={pageKey} className="page-enter-transition">
       {children}
     </div>
   );
@@ -65,10 +54,8 @@ const App = () => {
   const [wishlist, setWishlist] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isWishlistOpen, setIsWishlistOpen] = useState(false);
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [quickViewProduct, setQuickViewProduct] = useState(null);
-  const [showAddToCartAnimation, setShowAddToCartAnimation] = useState(false);
   const [user, setUser] = useState(null);
   const [showLogoutMessage, setShowLogoutMessage] = useState(false);
 
@@ -181,6 +168,68 @@ const App = () => {
     }
   }, [searchTerm]);
 
+  // Keep a ref to the current user so useCallback-wrapped functions can access it
+  const userRef = React.useRef(user);
+  userRef.current = user;
+
+  const addToCart = useCallback((product) => {
+    const productId = product._id || product.id;
+    setCartItems(prev => {
+      const existing = prev.find(item => (item._id || item.id) === productId);
+      if (existing) {
+        return prev.map(item =>
+          (item._id || item.id) === productId ? { ...item, quantity: item.quantity + 1 } : item
+        );
+      }
+      return [...prev, { ...product, quantity: 1 }];
+    });
+  }, []);
+
+  const removeFromCart = (productId) => {
+    setCartItems(prev => prev.filter(item => (item._id || item.id) !== productId));
+  };
+
+  const updateQuantity = (productId, newQuantity) => {
+    setCartItems(prev =>
+      prev.map(item => ((item._id || item.id) === productId ? { ...item, quantity: newQuantity } : item))
+    );
+  };
+
+  const toggleWishlist = useCallback(async (product) => {
+    const productId = product._id || product.id;
+    let wasInWishlist = false;
+
+    setWishlist(prev => {
+      const exists = prev.find(item => (item._id || item.id) === productId);
+      wasInWishlist = !!exists;
+      if (exists) {
+        return prev.filter(item => (item._id || item.id) !== productId);
+      }
+      return [...prev, product];
+    });
+
+    // Sync with backend if user is logged in
+    const currentUser = userRef.current;
+    if (currentUser) {
+      try {
+        if (wasInWishlist) {
+          await userApi.removeFromWishlist(currentUser.uid, productId);
+        } else {
+          await userApi.addToWishlist(currentUser.uid, productId);
+        }
+      } catch (error) {
+        console.error('Failed to sync wishlist:', error);
+        // Revert on error
+        setWishlist(prev => {
+          if (wasInWishlist) {
+            return [...prev, product];
+          }
+          return prev.filter(item => (item._id || item.id) !== productId);
+        });
+      }
+    }
+  }, []);
+
   // Show loading screen (controlled by LoadingScreen component)
   if (showLoadingScreen) {
     return <LoadingScreen onComplete={() => setShowLoadingScreen(false)} />;
@@ -224,65 +273,6 @@ const App = () => {
     navigate('/');
   };
 
-  const addToCart = (product) => {
-    const productId = product._id || product.id;
-    setCartItems(prev => {
-      const existing = prev.find(item => (item._id || item.id) === productId);
-      if (existing) {
-        return prev.map(item =>
-          (item._id || item.id) === productId ? { ...item, quantity: item.quantity + 1 } : item
-        );
-      }
-      return [...prev, { ...product, quantity: 1 }];
-    });
-    // Trigger +1 animation
-    setShowAddToCartAnimation(true);
-    setTimeout(() => setShowAddToCartAnimation(false), 1200);
-  };
-
-  const removeFromCart = (productId) => {
-    setCartItems(prev => prev.filter(item => (item._id || item.id) !== productId));
-  };
-
-  const updateQuantity = (productId, newQuantity) => {
-    setCartItems(prev =>
-      prev.map(item => ((item._id || item.id) === productId ? { ...item, quantity: newQuantity } : item))
-    );
-  };
-
-  const toggleWishlist = async (product) => {
-    const productId = product._id || product.id;
-    const exists = wishlist.find(item => (item._id || item.id) === productId);
-
-    // Update local state immediately for responsive UI
-    setWishlist(prev => {
-      if (exists) {
-        return prev.filter(item => (item._id || item.id) !== productId);
-      }
-      return [...prev, product];
-    });
-
-    // Sync with backend if user is logged in
-    if (user) {
-      try {
-        if (exists) {
-          await userApi.removeFromWishlist(user.uid, productId);
-        } else {
-          await userApi.addToWishlist(user.uid, productId);
-        }
-      } catch (error) {
-        console.error('Failed to sync wishlist:', error);
-        // Revert on error
-        setWishlist(prev => {
-          if (exists) {
-            return [...prev, product];
-          }
-          return prev.filter(item => (item._id || item.id) !== productId);
-        });
-      }
-    }
-  };
-
   const removeFromWishlist = async (product) => {
     const productId = product._id || product.id;
 
@@ -323,9 +313,8 @@ const App = () => {
     searchTerm: searchTerm,
     onSearchChange: setSearchTerm,
     onNavigate: handleNavigate,
-    onOpenCart: () => { setIsWishlistOpen(false); setIsSearchOpen(false); setIsCartOpen(true); },
-    onOpenWishlist: () => { setIsCartOpen(false); setIsSearchOpen(false); setIsWishlistOpen(true); },
-    onOpenSearch: () => { setIsCartOpen(false); setIsWishlistOpen(false); setIsSearchOpen(true); },
+    onOpenCart: () => { setIsWishlistOpen(false); setIsCartOpen(true); },
+    onOpenWishlist: () => { setIsCartOpen(false); setIsWishlistOpen(true); },
     wishlistCount: wishlist.length,
     cartCount: cartItems.reduce((sum, item) => sum + item.quantity, 0),
     user: user,
@@ -403,8 +392,8 @@ const App = () => {
     </>
   );
 
-  // Home page content
-  const HomePage = () => (
+  // Home page content (plain JSX, NOT a component — avoids unmount/remount on re-render)
+  const homePageContent = (
     <>
       {showLogoutMessage && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[100] animate-fade-in">
@@ -539,28 +528,28 @@ const App = () => {
             <div>
               <h4 className="font-semibold mb-4">Shop</h4>
               <ul className="space-y-2 text-gray-400">
-                <li><a href="#" className="hover:text-navy-accent transition">Keyboards</a></li>
-                <li><a href="#" className="hover:text-navy-accent transition">Mice</a></li>
-                <li><a href="#" className="hover:text-navy-accent transition">Headsets</a></li>
-                <li><a href="#" className="hover:text-navy-accent transition">Monitors</a></li>
+                <li><button type="button" onClick={() => handleNavigate('keyboards')} className="hover:text-navy-accent transition">Keyboards</button></li>
+                <li><button type="button" onClick={() => handleNavigate('mice')} className="hover:text-navy-accent transition">Mice</button></li>
+                <li><button type="button" onClick={() => handleNavigate('headsets')} className="hover:text-navy-accent transition">Headsets</button></li>
+                <li><button type="button" className="hover:text-navy-accent transition">Monitors</button></li>
               </ul>
             </div>
             <div>
               <h4 className="font-semibold mb-4">Support</h4>
               <ul className="space-y-2 text-gray-400">
-                <li><a href="#" className="hover:text-navy-accent transition">Contact Us</a></li>
-                <li><a href="#" className="hover:text-navy-accent transition">Shipping Info</a></li>
-                <li><a href="#" className="hover:text-navy-accent transition">Returns</a></li>
-                <li><a href="#" className="hover:text-navy-accent transition">FAQ</a></li>
+                <li><button type="button" className="hover:text-navy-accent transition">Contact Us</button></li>
+                <li><button type="button" className="hover:text-navy-accent transition">Shipping Info</button></li>
+                <li><button type="button" className="hover:text-navy-accent transition">Returns</button></li>
+                <li><button type="button" className="hover:text-navy-accent transition">FAQ</button></li>
               </ul>
             </div>
             <div>
               <h4 className="font-semibold mb-4">Follow Us</h4>
               <p className="text-gray-400 mb-4">Stay updated with the latest gear</p>
               <div className="flex gap-4">
-                <a href="#" className="text-gray-400 hover:text-navy-accent transition">Facebook</a>
-                <a href="#" className="text-gray-400 hover:text-navy-accent transition">Twitter</a>
-                <a href="#" className="text-gray-400 hover:text-navy-accent transition">Instagram</a>
+                <button type="button" className="text-gray-400 hover:text-navy-accent transition">Facebook</button>
+                <button type="button" className="text-gray-400 hover:text-navy-accent transition">Twitter</button>
+                <button type="button" className="text-gray-400 hover:text-navy-accent transition">Instagram</button>
               </div>
             </div>
           </div>
@@ -572,8 +561,8 @@ const App = () => {
     </>
   );
 
-  // Category page wrapper (reads category from URL param)
-  const CategoryPageWrapper = () => {
+  // Category page wrapper (plain JSX, NOT a component)
+  const categoryPageContent = (() => {
     // Get category from URL using useParams would be ideal, but since we're inside App
     // we extract it from location
     const pathParts = location.pathname.split('/');
@@ -581,7 +570,7 @@ const App = () => {
     const config = categoryConfig[category];
 
     if (!config) {
-      return <HomePage />;
+      return homePageContent;
     }
 
     return (
@@ -600,10 +589,10 @@ const App = () => {
         />
       </>
     );
-  };
+  })();
 
-  // Auth page wrapper
-  const AuthPage = () => {
+  // Auth page wrapper (plain JSX)
+  const authPageContent = (() => {
     const currentPath = location.pathname;
     const initialPanel = currentPath === '/signup' ? 'signup' : 'signin';
 
@@ -620,22 +609,20 @@ const App = () => {
           mixBlendMode="normal"
         />
         <div className="relative z-10 h-full">
-          <PageTransition pageKey={currentPath}>
-            <AuthContainer
-              initialPanel={initialPanel}
-              onNavigate={handleNavigate}
-              onSignInSuccess={handleSignInSuccess}
-              onSignUpSuccess={handleSignUpSuccess}
-              noBackground={true}
-            />
-          </PageTransition>
+          <AuthContainer
+            initialPanel={initialPanel}
+            onNavigate={handleNavigate}
+            onSignInSuccess={handleSignInSuccess}
+            onSignUpSuccess={handleSignUpSuccess}
+            noBackground={true}
+          />
         </div>
       </div>
     );
-  };
+  })();
 
-  // Profile Setup page wrapper
-  const ProfileSetupPage = () => (
+  // Profile Setup page wrapper (plain JSX)
+  const profileSetupPageContent = (
     <div className="h-screen bg-gradient-navy relative overflow-hidden">
       <FloatingLines
         linesGradient={['#141E30', '#3F5E96', '#4A6BA8', '#5C7BB5']}
@@ -648,14 +635,12 @@ const App = () => {
         mixBlendMode="normal"
       />
       <div className="relative z-10 h-full">
-        <PageTransition pageKey="profileSetup">
-          <ProfileSetup
-            user={user}
-            onComplete={handleProfileSetupComplete}
-            onSkip={() => navigate('/')}
-            noBackground={true}
-          />
-        </PageTransition>
+        <ProfileSetup
+          user={user}
+          onComplete={handleProfileSetupComplete}
+          onSkip={() => navigate('/')}
+          noBackground={true}
+        />
       </div>
     </div>
   );
@@ -664,41 +649,43 @@ const App = () => {
     <div className="bg-gradient-navy min-h-screen">
       <Routes>
         {/* Auth pages (no CardNav) */}
-        <Route path="/signin" element={<AuthPage />} />
-        <Route path="/signup" element={<AuthPage />} />
-        <Route path="/profile-setup" element={<ProfileSetupPage />} />
+        <Route path="/signin" element={<PageTransition pageKey={location.pathname}>{authPageContent}</PageTransition>} />
+        <Route path="/signup" element={<PageTransition pageKey={location.pathname}>{authPageContent}</PageTransition>} />
+        <Route path="/profile-setup" element={<PageTransition pageKey={location.pathname}>{profileSetupPageContent}</PageTransition>} />
 
         {/* Pages with CardNav */}
         <Route path="*" element={
           <>
             <CardNav {...cardNavProps} />
-            <Routes>
-              <Route index element={<HomePage />} />
-              <Route path="checkout/*" element={
-                <CheckoutPage
-                  cartItems={cartItems}
-                  user={user}
-                  onNavigate={handleNavigate}
-                  onOrderComplete={handleOrderComplete}
-                  updateQuantity={updateQuantity}
-                  removeFromCart={removeFromCart}
-                />
-              } />
-              <Route path="wishlist" element={
-                <WishlistPage
-                  wishlist={wishlist.map(item => item._id || item.id)}
-                  products={products}
-                  onNavigate={handleNavigate}
-                  onRemoveFromWishlist={removeFromWishlist}
-                  onAddToCart={addToCart}
-                />
-              } />
-              <Route path="profile" element={
-                <ProfilePage user={user} onNavigate={handleNavigate} onSignOut={handleSignOut} />
-              } />
-              <Route path="category/:category" element={<CategoryPageWrapper />} />
-              <Route path="*" element={<HomePage />} />
-            </Routes>
+            <PageTransition pageKey={`${location.pathname}${location.search}`}>
+              <Routes>
+                <Route index element={homePageContent} />
+                <Route path="checkout/*" element={
+                  <CheckoutPage
+                    cartItems={cartItems}
+                    user={user}
+                    onNavigate={handleNavigate}
+                    onOrderComplete={handleOrderComplete}
+                    updateQuantity={updateQuantity}
+                    removeFromCart={removeFromCart}
+                  />
+                } />
+                <Route path="wishlist" element={
+                  <WishlistPage
+                    wishlist={wishlist.map(item => item._id || item.id)}
+                    products={products}
+                    onNavigate={handleNavigate}
+                    onRemoveFromWishlist={removeFromWishlist}
+                    onAddToCart={addToCart}
+                  />
+                } />
+                <Route path="profile" element={
+                  <ProfilePage user={user} onNavigate={handleNavigate} onSignOut={handleSignOut} />
+                } />
+                <Route path="category/:category" element={categoryPageContent} />
+                <Route path="*" element={homePageContent} />
+              </Routes>
+            </PageTransition>
             {sharedModals}
           </>
         } />

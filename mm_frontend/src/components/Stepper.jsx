@@ -127,6 +127,7 @@ export default function Stepper({
                     <div className={`footer-nav ${currentStep !== 1 ? 'spread' : 'end'}`}>
                         {currentStep !== 1 && (
                             <button
+                                type="button"
                                 onClick={handleBack}
                                 className={`back-button ${currentStep === 1 ? 'inactive' : ''}`}
                                 {...backButtonProps}
@@ -135,6 +136,7 @@ export default function Stepper({
                             </button>
                         )}
                         <button
+                            type="button"
                             onClick={() => {
                                 if (disableNext) {
                                     onDisabledNextClick();
